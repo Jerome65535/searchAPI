@@ -296,37 +296,31 @@ public class AiAnalysisModule implements Module {
     }
 
     private void loadConfig() {
-        String provider = callbacks.loadExtensionSetting("ai_api_url");
-        if (provider != null) {
-            String savedProvider = callbacks.loadExtensionSetting("ai_provider");
-            if (savedProvider != null) {
-                providerCombo.setSelectedItem(savedProvider);
-            }
-            apiUrlField.setText(callbacks.loadExtensionSetting("ai_api_url"));
-            String key = callbacks.loadExtensionSetting("ai_api_key");
-            if (key != null) {
-                apiKeyField.setText(key);
-            }
-            String model = callbacks.loadExtensionSetting("ai_model");
-            if (model != null) {
-                modelField.setText(model);
-            }
-            String maxTokens = callbacks.loadExtensionSetting("ai_max_tokens");
-            if (maxTokens != null) {
-                maxTokensField.setText(maxTokens);
-            }
-            String temp = callbacks.loadExtensionSetting("ai_temperature");
-            if (temp != null) {
-                temperatureField.setText(temp);
-            }
-            String template = callbacks.loadExtensionSetting("ai_prompt_template");
-            if (template != null) {
-                templateArea.setText(template);
-                promptTemplate = template;
-            }
-            JOptionPane.showMessageDialog(panel, "Configuration loaded!", "Load", JOptionPane.INFORMATION_MESSAGE);
-        } else {
+        String savedUrl = callbacks.loadExtensionSetting("ai_api_url");
+        if (savedUrl == null) {
             JOptionPane.showMessageDialog(panel, "No saved configuration found.", "Load", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        String savedProvider = callbacks.loadExtensionSetting("ai_provider");
+        if (savedProvider != null) {
+            providerCombo.setSelectedItem(savedProvider);
+        }
+        apiUrlField.setText(savedUrl);
+        setFieldIfNotNull(apiKeyField, callbacks.loadExtensionSetting("ai_api_key"));
+        setFieldIfNotNull(modelField, callbacks.loadExtensionSetting("ai_model"));
+        setFieldIfNotNull(maxTokensField, callbacks.loadExtensionSetting("ai_max_tokens"));
+        setFieldIfNotNull(temperatureField, callbacks.loadExtensionSetting("ai_temperature"));
+        String template = callbacks.loadExtensionSetting("ai_prompt_template");
+        if (template != null) {
+            templateArea.setText(template);
+            promptTemplate = template;
+        }
+        JOptionPane.showMessageDialog(panel, "Configuration loaded!", "Load", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void setFieldIfNotNull(JTextField field, String value) {
+        if (value != null) {
+            field.setText(value);
         }
     }
 
@@ -364,16 +358,8 @@ public class AiAnalysisModule implements Module {
         String apiUrl = apiUrlField.getText().trim();
         String apiKey = apiKeyField.getText().trim();
         String model = modelField.getText().trim();
-        int maxTokens = 4096;
-        try {
-            maxTokens = Integer.parseInt(maxTokensField.getText().trim());
-        } catch (NumberFormatException ignored) {
-        }
-        double temperature = 0.7;
-        try {
-            temperature = Double.parseDouble(temperatureField.getText().trim());
-        } catch (NumberFormatException ignored) {
-        }
+        int maxTokens = parseIntOrDefault(maxTokensField.getText().trim(), 4096);
+        double temperature = parseDoubleOrDefault(temperatureField.getText().trim(), 0.7);
 
         if (apiUrl.isEmpty()) {
             throw new Exception("API URL is required");
@@ -387,20 +373,7 @@ public class AiAnalysisModule implements Module {
         conn.setConnectTimeout(30000);
         conn.setReadTimeout(60000);
 
-        String requestBody;
-        if (provider.equals("Claude (Anthropic)")) {
-            conn.setRequestProperty("x-api-key", apiKey);
-            conn.setRequestProperty("anthropic-version", "2023-06-01");
-            requestBody = buildClaudeRequest(model, prompt, maxTokens);
-        } else if (provider.equals("Ollama (Local)")) {
-            requestBody = buildOllamaRequest(model, prompt);
-        } else if (provider.equals("通义千问 (Qwen)")) {
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            requestBody = buildQwenRequest(model, prompt, maxTokens, temperature);
-        } else {
-            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
-            requestBody = buildOpenAICompatibleRequest(model, prompt, maxTokens, temperature);
-        }
+        String requestBody = buildRequestBody(provider, model, prompt, maxTokens, temperature, apiKey, conn);
 
         try (OutputStream os = conn.getOutputStream()) {
             byte[] input = requestBody.getBytes(StandardCharsets.UTF_8);
@@ -409,26 +382,60 @@ public class AiAnalysisModule implements Module {
 
         int responseCode = conn.getResponseCode();
         if (responseCode != 200) {
-            BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8));
-            StringBuilder errorResponse = new StringBuilder();
-            String line;
-            while ((line = errorReader.readLine()) != null) {
-                errorResponse.append(line);
-            }
-            errorReader.close();
-            throw new Exception("API returned " + responseCode + ": " + errorResponse.toString());
+            String errorResponse = readStream(conn.getErrorStream());
+            throw new Exception("API returned " + responseCode + ": " + errorResponse);
         }
 
-        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-        StringBuilder response = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            response.append(line);
-        }
-        reader.close();
+        String response = readStream(conn.getInputStream());
         conn.disconnect();
 
-        return parseResponse(response.toString(), provider);
+        return parseResponse(response, provider);
+    }
+
+    private int parseIntOrDefault(String value, int defaultValue) {
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private double parseDoubleOrDefault(String value, double defaultValue) {
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
+    private String buildRequestBody(String provider, String model, String prompt, int maxTokens, double temperature, String apiKey, HttpURLConnection conn) {
+        if ("Claude (Anthropic)".equals(provider)) {
+            conn.setRequestProperty("x-api-key", apiKey);
+            conn.setRequestProperty("anthropic-version", "2023-06-01");
+            return buildClaudeRequest(model, prompt, maxTokens);
+        } else if ("Ollama (Local)".equals(provider)) {
+            return buildOllamaRequest(model, prompt);
+        } else if ("通义千问 (Qwen)".equals(provider)) {
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            return buildQwenRequest(model, prompt, maxTokens, temperature);
+        } else {
+            conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+            return buildOpenAICompatibleRequest(model, prompt, maxTokens, temperature);
+        }
+    }
+
+    private String readStream(java.io.InputStream stream) throws Exception {
+        if (stream == null) {
+            return "";
+        }
+        BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            sb.append(line);
+        }
+        reader.close();
+        return sb.toString();
     }
 
     private String buildOpenAICompatibleRequest(String model, String prompt, int maxTokens, double temperature) {
@@ -464,36 +471,25 @@ public class AiAnalysisModule implements Module {
 
     private String parseResponse(String jsonResponse, String provider) {
         try {
-            if (provider.equals("Claude (Anthropic)")) {
-                int contentStart = jsonResponse.indexOf("\"text\":\"");
-                if (contentStart != -1) {
-                    contentStart += 8;
-                    int contentEnd = jsonResponse.indexOf("\"", contentStart);
-                    if (contentEnd != -1) {
-                        return unescapeJson(jsonResponse.substring(contentStart, contentEnd));
-                    }
-                }
-            } else if (provider.equals("通义千问 (Qwen)")) {
-                int contentStart = jsonResponse.indexOf("\"content\":\"");
-                if (contentStart != -1) {
-                    contentStart += 11;
-                    int contentEnd = jsonResponse.indexOf("\"", contentStart);
-                    if (contentEnd != -1) {
-                        return unescapeJson(jsonResponse.substring(contentStart, contentEnd));
-                    }
-                }
+            String searchKey;
+            if ("Claude (Anthropic)".equals(provider)) {
+                searchKey = "\"text\":\"";
             } else {
-                int contentStart = jsonResponse.indexOf("\"content\":\"");
-                if (contentStart != -1) {
-                    contentStart += 11;
-                    int contentEnd = jsonResponse.indexOf("\"", contentStart);
-                    while (contentEnd != -1 && jsonResponse.charAt(contentEnd - 1) == '\\') {
-                        contentEnd = jsonResponse.indexOf("\"", contentEnd + 1);
-                    }
-                    if (contentEnd != -1) {
-                        return unescapeJson(jsonResponse.substring(contentStart, contentEnd));
-                    }
+                searchKey = "\"content\":\"";
+            }
+            int contentStart = jsonResponse.indexOf(searchKey);
+            if (contentStart == -1) {
+                return jsonResponse;
+            }
+            contentStart += searchKey.length();
+            int contentEnd = jsonResponse.indexOf("\"", contentStart);
+            if (!"Claude (Anthropic)".equals(provider) && !"通义千问 (Qwen)".equals(provider)) {
+                while (contentEnd != -1 && jsonResponse.charAt(contentEnd - 1) == '\\') {
+                    contentEnd = jsonResponse.indexOf("\"", contentEnd + 1);
                 }
+            }
+            if (contentEnd != -1) {
+                return unescapeJson(jsonResponse.substring(contentStart, contentEnd));
             }
             return jsonResponse;
         } catch (Exception e) {

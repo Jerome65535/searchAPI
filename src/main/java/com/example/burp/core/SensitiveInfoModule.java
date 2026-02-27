@@ -314,19 +314,6 @@ public class SensitiveInfoModule implements Module {
                 "SAML Key=(?i)(saml_key|saml_secret|saml_certificate)\\s*[:=]\\s*[\"']?[^\\s\"']{20,}[\"']?\n" +
                 "SSO Token=(?i)(sso_token|sso_secret|sso_key)\\s*[:=]\\s*[\"']?[^\\s\"']{8,}[\"']?\n" +
 
-                "SQL注入=(?i)(select\\s+.*\\s+from|union\\s+(?:all\\s+)?select|insert\\s+into|delete\\s+from|drop\\s+table|exec\\s+|execute\\s+|xp_cmdshell|sp_executesql|load_file|into\\s+outfile|into\\s+dumpfile)\n" +
-                "XPath注入=(?i)(xpath|/\\*\\[|\\]\\[|contains\\s*\\(|text\\s*\\()\n" +
-                "LDAP注入=(?i)(\\(\\|\\(|\\(\\&\\(|\\(\\!\\(|\\=\\*\\)|\\(cn=|\\(dn=|\\(uid=|\\(objectclass=)\n" +
-                "命令注入=(?i)(\\||\\$\\(|\\$\\{|system\\s*\\(|exec\\s*\\(|shell_exec|passthru|popen|Runtime\\.exec|ProcessBuilder|subprocess\\.)\n" +
-                "路径穿越=(?i)(\\.\\./|\\.\\.\\\\|%2e%2e%2f|%2e%2e/|\\.\\.%2f|%2e%2e%5c|%252e%252e)\n" +
-                "XXE=(?i)(<!ENTITY|<!DOCTYPE.*\\[|SYSTEM\\s+\"|PUBLIC\\s+\")\n" +
-                "SSRF参数=(?i)(url=|uri=|dest=|redirect=|next=|target=|rurl=|domain=|callback=|return_url=|goto=|feed=|host=|site=|html=|data=|reference=|ref=|load=|sourceUrl=)\n" +
-                "开放重定向=(?i)(redirect\\s*=|location\\s*[:=]|next\\s*=|url\\s*=|return_to\\s*=|goto\\s*=|continue\\s*=|dest\\s*=|destination\\s*=|returnUrl\\s*=|forward\\s*=)\n" +
-                "CORS配置=(?i)(access-control-allow-origin\\s*:\\s*\\*|access-control-allow-credentials\\s*:\\s*true)\n" +
-                "CRLF注入=(?i)(%0d%0a|\\r\\n|\\\\r\\\\n)\n" +
-                "反序列化=(?i)(ObjectInputStream|readObject|unserialize|deserialize|pickle\\.loads?|yaml\\.unsafe_load|eval\\s*\\(|Function\\s*\\()\n" +
-                "模板注入=(?i)(\\{\\{[^}]*\\}\\}.*\\{\\{|<%[^%]*%>.*<%|\\$\\{[^}]*\\}.*\\$\\{|#\\{[^}]*\\}.*#\\{)\n" +
-
                 "敏感路径=(?i)(/etc/passwd|/etc/shadow|/etc/hosts|/proc/self|c:\\\\windows|c:/windows|/var/log|/proc/version|/proc/net/arp|/proc/net/tcp)\n" +
 
                 "备份文件=(?i)(\\.bak|\\.backup|\\.old|\\.copy|\\.orig|\\.save|\\.swp|\\.swo|\\.tmp|\\.temp|~$|\\.sql\\.gz|\\.sql\\.bak|\\.tar\\.bak)\n" +
@@ -503,13 +490,10 @@ public class SensitiveInfoModule implements Module {
             return false;
         }
         String lower = match.toLowerCase();
-        if (lower.contains("your_") || lower.contains("your-") || lower.contains("replace_me")
+        return lower.contains("your_") || lower.contains("your-") || lower.contains("replace_me")
                 || lower.contains("example.com") || lower.contains("test.com") || lower.contains("xxx")
                 || lower.contains("sample") || lower.contains("placeholder") || lower.contains("dummy")
-                || lower.matches(".*<[a-z]+>.*") || lower.contains("changeme") || lower.contains("insert_")) {
-            return true;
-        }
-        return false;
+                || lower.matches(".*<[a-z]+>.*") || lower.contains("changeme") || lower.contains("insert_");
     }
 
     private static class RegexRule {

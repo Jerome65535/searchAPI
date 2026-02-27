@@ -71,7 +71,9 @@ public class UnauthorizedScanModule implements Module {
 
     @Override
     public void processResponse(int toolFlag, IHttpRequestResponse messageInfo) {
-        scheduleChecks(messageInfo);
+        if (toolFlag == IBurpExtenderCallbacks.TOOL_PROXY) {
+            scheduleChecks(messageInfo);
+        }
     }
 
     @Override
@@ -677,24 +679,26 @@ public class UnauthorizedScanModule implements Module {
             return;
         }
         URL baseUrl = helpers.analyzeRequest(messageInfo).getUrl();
+        List<String> headers = helpers.analyzeRequest(messageInfo).getHeaders();
         List<String> basePaths = buildBasePaths(baseUrl.getPath());
         for (String basePath : basePaths) {
-            scheduleTarget(baseUrl, basePath);
+            scheduleTarget(baseUrl, basePath, headers);
             for (String path : paths) {
                 String combined = combinePaths(basePath, path);
-                scheduleTarget(baseUrl, combined);
+                scheduleTarget(baseUrl, combined, headers);
             }
         }
     }
 
-    private void scheduleTarget(URL baseUrl, String path) {
+    private void scheduleTarget(URL baseUrl, String path, List<String> headers) {
         String baseKey = baseUrl.getProtocol() + "://" + baseUrl.getHost() + ":" + baseUrl.getPort();
         String key = baseKey + path;
         if (checkedTargets.contains(key)) {
             return;
         }
         checkedTargets.add(key);
-        executor.submit(() -> checkPath(baseUrl, path));
+        List<String> headersCopy = new ArrayList<String>(headers);
+        executor.submit(() -> checkPath(baseUrl, path, headersCopy));
     }
 
     private List<String> buildBasePaths(String path) {
@@ -739,21 +743,67 @@ public class UnauthorizedScanModule implements Module {
         return left + right;
     }
 
-    private void checkPath(URL baseUrl, String path) {
+    private void checkPath(URL baseUrl, String path, List<String> originalHeaders) {
         try {
             URI baseUri = new URI(baseUrl.getProtocol(), null, baseUrl.getHost(), baseUrl.getPort(), null, null, null);
             URL target = baseUri.resolve(path).toURL();
-            byte[] request = helpers.buildHttpRequest(target);
+            
+            // Check 1: Unauthorized (remove auth headers)
+            doCheck(baseUrl, target, originalHeaders, false);
+            
+            // Check 2: Authorized (keep auth headers)
+            doCheck(baseUrl, target, originalHeaders, true);
+            
+        } catch (Exception ex) {
+            callbacks.printError(ex.getMessage());
+        }
+    }
+
+    private void doCheck(URL baseUrl, URL targetUrl, List<String> originalHeaders, boolean withAuth) {
+        try {
+            List<String> newHeaders = new ArrayList<String>();
+            for (String header : originalHeaders) {
+                String lower = header.toLowerCase();
+                if (!withAuth && isAuthHeader(header)) {
+                    continue;
+                }
+                // Remove content headers as we force GET
+                if (lower.startsWith("content-length:") || lower.startsWith("content-type:")) {
+                    continue;
+                }
+                newHeaders.add(header);
+            }
+            
+            if (!newHeaders.isEmpty()) {
+                String firstLine = newHeaders.get(0);
+                String[] parts = firstLine.split("\\s+");
+                if (parts.length >= 3) {
+                    String newPath = targetUrl.getFile();
+                    if (newPath.isEmpty()) {
+                        newPath = "/";
+                    }
+                    // Force GET method for path scanning
+                    newHeaders.set(0, "GET " + newPath + " " + parts[2]);
+                }
+            }
+            
+            byte[] request = helpers.buildHttpMessage(newHeaders, null);
             IHttpRequestResponse resp = callbacks.makeHttpRequest(helpers.buildHttpService(
                     baseUrl.getHost(), baseUrl.getPort(), baseUrl.getProtocol()), request);
+            
             if (resp == null || resp.getResponse() == null) {
                 return;
             }
+            
             IResponseInfo responseInfo = helpers.analyzeResponse(resp.getResponse());
             int statusCode = responseInfo.getStatusCode();
-            if (statusCode == 404 || statusCode == 502 || statusCode == 503 || statusCode == 504) {
+            if (isIgnoredStatusCode(statusCode)) {
                 return;
             }
+            if (statusCode != 200) {
+                return;
+            }
+            
             int bodyOffset = responseInfo.getBodyOffset();
             byte[] bodyBytes = new byte[Math.max(0, resp.getResponse().length - bodyOffset)];
             System.arraycopy(resp.getResponse(), bodyOffset, bodyBytes, 0, bodyBytes.length);
@@ -761,17 +811,32 @@ public class UnauthorizedScanModule implements Module {
             if (body == null) {
                 return;
             }
-            if (statusCode != 200) {
-                return;
-            }
+            
             if (hitPattern != null && !hitPattern.matcher(body).find()) {
                 return;
             }
+            
             String time = timeFormat.format(new Date());
-            ResultItem item = new ResultItem(getName(), "Open Access (200)", target.toString(), "status=200", time, resp);
+            String title = withAuth ? "Authorized Access (200)" : "Unauthorized Access (200)";
+            ResultItem item = new ResultItem(getName(), title, targetUrl.toString(), "status=200", time, resp);
             SwingUtilities.invokeLater(() -> model.addItem(item));
-        } catch (Exception ex) {
-            callbacks.printError(ex.getMessage());
+            
+        } catch (Exception e) {
+            callbacks.printError("Check failed: " + e.getMessage());
         }
+    }
+
+    private boolean isAuthHeader(String header) {
+        String lower = header.toLowerCase();
+        return lower.startsWith("cookie:") || 
+               lower.startsWith("authorization:") || 
+               lower.startsWith("token:") ||
+               lower.startsWith("x-auth-token:") ||
+               lower.startsWith("x-access-token:") ||
+               lower.startsWith("access-token:");
+    }
+
+    private boolean isIgnoredStatusCode(int statusCode) {
+        return statusCode == 404 || statusCode == 502 || statusCode == 503 || statusCode == 504;
     }
 }

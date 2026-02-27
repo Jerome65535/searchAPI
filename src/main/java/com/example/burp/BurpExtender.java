@@ -151,22 +151,32 @@ public class BurpExtender implements IBurpExtender, ITab, IHttpListener, IContex
         if (contentType == null) {
             contentType = "";
         }
+        String lowerContentType = contentType.toLowerCase();
         String path = helpers.analyzeRequest(messageInfo).getUrl().getPath().toLowerCase();
-        boolean isJs = contentType.toLowerCase().contains("script") || path.endsWith(".js");
-        boolean isHtml = contentType.toLowerCase().contains("html") || path.endsWith(".html") || path.endsWith(".htm");
-        boolean isImage = contentType.toLowerCase().contains("image")
-                || path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg")
-                || path.endsWith(".gif") || path.endsWith(".svg") || path.endsWith(".ico")
-                || path.endsWith(".webp") || path.endsWith(".bmp");
-        boolean isCss = contentType.toLowerCase().contains("css") || path.endsWith(".css");
-        boolean isFont = path.endsWith(".woff") || path.endsWith(".woff2")
-                || path.endsWith(".ttf") || path.endsWith(".otf") || path.endsWith(".eot");
+
+        boolean isJs = lowerContentType.contains("script") || path.endsWith(".js");
+        boolean isHtml = lowerContentType.contains("html") || path.endsWith(".html") || path.endsWith(".htm");
+        boolean isImage = lowerContentType.contains("image") || isImageExtension(path);
+        boolean isCss = lowerContentType.contains("css") || path.endsWith(".css");
+        boolean isFont = isFontExtension(path);
         boolean isApi = !isJs && !isHtml && !isImage && !isCss && !isFont;
         boolean isOther = !isApi && !isJs && !isHtml && !isImage;
+
         return (configModule.scanApi() && isApi)
                 || (configModule.scanJs() && isJs)
                 || (configModule.scanHtml() && isHtml)
                 || (configModule.scanImage() && isImage)
                 || (configModule.scanOther() && isOther);
+    }
+
+    private boolean isImageExtension(String path) {
+        return path.endsWith(".png") || path.endsWith(".jpg") || path.endsWith(".jpeg")
+                || path.endsWith(".gif") || path.endsWith(".svg") || path.endsWith(".ico")
+                || path.endsWith(".webp") || path.endsWith(".bmp");
+    }
+
+    private boolean isFontExtension(String path) {
+        return path.endsWith(".woff") || path.endsWith(".woff2")
+                || path.endsWith(".ttf") || path.endsWith(".otf") || path.endsWith(".eot");
     }
 }

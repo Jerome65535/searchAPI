@@ -122,14 +122,10 @@ public class ConfigModule implements Module {
     }
 
     private void bindListeners() {
-        enabledCheck.addActionListener(e -> saveConfig());
-        proxyCheck.addActionListener(e -> saveConfig());
-        repeaterCheck.addActionListener(e -> saveConfig());
-        apiCheck.addActionListener(e -> saveConfig());
-        jsCheck.addActionListener(e -> saveConfig());
-        htmlCheck.addActionListener(e -> saveConfig());
-        imageCheck.addActionListener(e -> saveConfig());
-        otherCheck.addActionListener(e -> saveConfig());
+        JCheckBox[] checkboxes = {enabledCheck, proxyCheck, repeaterCheck, apiCheck, jsCheck, htmlCheck, imageCheck, otherCheck};
+        for (JCheckBox checkbox : checkboxes) {
+            checkbox.addActionListener(e -> saveConfig());
+        }
     }
 
     private void saveConfig() {

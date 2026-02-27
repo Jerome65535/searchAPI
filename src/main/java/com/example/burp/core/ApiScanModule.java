@@ -6,6 +6,7 @@ import burp.IHttpRequestResponse;
 import burp.IHttpService;
 import burp.IResponseInfo;
 import com.example.burp.ui.ApiScanTreePanel;
+import com.example.burp.util.UrlUtils;
 
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
@@ -127,11 +128,16 @@ public class ApiScanModule implements Module {
 
     @Override
     public void processResponse(int toolFlag, IHttpRequestResponse messageInfo) {
-        if (toolFlag != IBurpExtenderCallbacks.TOOL_PROXY && toolFlag != 1024) return;
-        if (messageInfo == null || messageInfo.getRequest() == null) return;
+        if (toolFlag != IBurpExtenderCallbacks.TOOL_PROXY && toolFlag != 1024) {
+            return;
+        }
+        if (messageInfo == null || messageInfo.getRequest() == null) {
+            return;
+        }
         String origin = originFromRequest(messageInfo);
-        if (origin == null) return;
-        if (scannedOrigins.contains(origin)) return;
+        if (origin == null || scannedOrigins.contains(origin)) {
+            return;
+        }
         scanMessage(messageInfo);
         scannedOrigins.add(origin);
     }
@@ -139,90 +145,49 @@ public class ApiScanModule implements Module {
     @Override
     public void processManual(IHttpRequestResponse messageInfo) {
         String origin = originFromRequest(messageInfo);
-        if (origin != null) scannedOrigins.remove(origin);
+        if (origin != null) {
+            scannedOrigins.remove(origin);
+        }
         scanMessage(messageInfo);
     }
 
     private String originFromRequest(IHttpRequestResponse messageInfo) {
-        if (messageInfo == null || messageInfo.getRequest() == null) return null;
+        if (messageInfo == null || messageInfo.getRequest() == null) {
+            return null;
+        }
         try {
             URL u = helpers.analyzeRequest(messageInfo.getRequest()).getUrl();
-            if (u == null) return null;
-            String protocol = u.getProtocol();
-            String host = u.getHost();
-            if (host == null) return null;
-            int port = u.getPort();
-            if (port <= 0) port = "https".equalsIgnoreCase(protocol) ? 443 : 80;
-            int defaultPort = "https".equalsIgnoreCase(protocol) ? 443 : 80;
-            String origin = protocol + "://" + host;
-            if (port != defaultPort) origin += ":" + port;
-            return origin;
+            return UrlUtils.extractOrigin(u);
         } catch (Exception e) {
             return null;
         }
     }
 
     public void fetchAndScan(String urlString) {
-        if (urlString == null || (urlString = urlString.trim()).isEmpty()) return;
+        if (urlString == null || (urlString = urlString.trim()).isEmpty()) {
+            return;
+        }
         try {
             URL mainUrl = new URL(urlString);
             String path = mainUrl.getPath();
-            if (path == null || path.isEmpty()) path = "/";
+            if (path == null || path.isEmpty()) {
+                path = "/";
+            }
             URL requestUrl = new URL(mainUrl.getProtocol(), mainUrl.getHost(), mainUrl.getPort(), path);
             int port = mainUrl.getPort();
-            if (port <= 0) port = "https".equalsIgnoreCase(mainUrl.getProtocol()) ? 443 : 80;
+            if (port <= 0) {
+                port = "https".equalsIgnoreCase(mainUrl.getProtocol()) ? 443 : 80;
+            }
             IHttpService service = helpers.buildHttpService(mainUrl.getHost(), port, mainUrl.getProtocol());
             Set<String> allUrls = new LinkedHashSet<String>();
-            IHttpRequestResponse mainResp = null;
 
             byte[] req = helpers.buildHttpRequest(requestUrl);
-            mainResp = callbacks.makeHttpRequest(service, req);
+            IHttpRequestResponse mainResp = callbacks.makeHttpRequest(service, req);
             if (mainResp != null && mainResp.getResponse() != null) {
-                IResponseInfo mainInfo = helpers.analyzeResponse(mainResp.getResponse());
-                int bodyOffset = mainInfo.getBodyOffset();
-                int len = Math.min(mainResp.getResponse().length - bodyOffset, MAX_BODY_LENGTH);
-                if (len > 0) {
-                    byte[] bodyBytes = new byte[len];
-                    System.arraycopy(mainResp.getResponse(), bodyOffset, bodyBytes, 0, len);
-                    String htmlBody = helpers.bytesToString(bodyBytes);
-                    if (htmlBody != null && !htmlBody.isEmpty()) {
-                        URL docUrl = helpers.analyzeRequest(mainResp.getRequest()).getUrl();
-                        allUrls.addAll(extractPathsFromJsHtml(htmlBody, docUrl, true));
-                        List<String> scriptUrls = parseScriptSrcUrls(htmlBody, requestUrl);
-                        int fetched = 0;
-                        for (String scriptUrlStr : scriptUrls) {
-                            if (fetched >= MAX_SCRIPTS_TO_FETCH) break;
-                            try {
-                                URL scriptUrl = new URL(scriptUrlStr);
-                                if (!scriptUrl.getHost().equalsIgnoreCase(mainUrl.getHost())) continue;
-                                byte[] sReq = helpers.buildHttpRequest(scriptUrl);
-                                IHttpRequestResponse sResp = callbacks.makeHttpRequest(service, sReq);
-                                if (sResp == null || sResp.getResponse() == null) continue;
-                                IResponseInfo sInfo = helpers.analyzeResponse(sResp.getResponse());
-                                int sOffset = sInfo.getBodyOffset();
-                                int sLen = Math.min(sResp.getResponse().length - sOffset, MAX_BODY_LENGTH);
-                                if (sLen <= 0) continue;
-                                String jsBody = helpers.bytesToString(Arrays.copyOfRange(sResp.getResponse(), sOffset, sOffset + sLen));
-                                if (jsBody != null && !jsBody.isEmpty()) {
-                                    URL scriptDocUrl = helpers.analyzeRequest(sResp.getRequest()).getUrl();
-                                    allUrls.addAll(extractPathsFromJsHtml(jsBody, scriptDocUrl, false));
-                                    fetched++;
-                                }
-                            } catch (Exception e) { }
-                        }
-                    }
-                }
+                allUrls.addAll(extractUrlsFromResponse(mainResp, service, mainUrl, requestUrl));
             }
             if (allUrls.isEmpty()) {
-                try {
-                    boolean defaultPort = ("https".equalsIgnoreCase(mainUrl.getProtocol()) && port == 443) || ("http".equalsIgnoreCase(mainUrl.getProtocol()) && port == 80);
-                    String baseStr = mainUrl.getProtocol() + "://" + mainUrl.getHost() + (defaultPort ? "" : ":" + port);
-                    String pathPrefix = mainUrl.getPath();
-                    if (pathPrefix == null || pathPrefix.isEmpty()) pathPrefix = "/";
-                    else if (!pathPrefix.endsWith("/")) pathPrefix = pathPrefix + "/";
-                    URL baseUrl = new URL(baseStr + pathPrefix);
-                    allUrls.addAll(buildBuiltinFullUrls(baseUrl));
-                } catch (Exception ignored) { }
+                allUrls.addAll(buildBuiltinUrlsForTarget(mainUrl, port));
             }
             final Set<String> copy = new LinkedHashSet<String>(allUrls);
             final IHttpRequestResponse msg = mainResp;
@@ -230,6 +195,75 @@ public class ApiScanModule implements Module {
         } catch (Exception e) {
             callbacks.printError("API Scan fetchAndScan error: " + e.getMessage());
         }
+    }
+
+    private Set<String> extractUrlsFromResponse(IHttpRequestResponse mainResp, IHttpService service, URL mainUrl, URL requestUrl) {
+        Set<String> allUrls = new LinkedHashSet<String>();
+        IResponseInfo mainInfo = helpers.analyzeResponse(mainResp.getResponse());
+        int bodyOffset = mainInfo.getBodyOffset();
+        int len = Math.min(mainResp.getResponse().length - bodyOffset, MAX_BODY_LENGTH);
+        if (len <= 0) {
+            return allUrls;
+        }
+        byte[] bodyBytes = new byte[len];
+        System.arraycopy(mainResp.getResponse(), bodyOffset, bodyBytes, 0, len);
+        String htmlBody = helpers.bytesToString(bodyBytes);
+        if (htmlBody == null || htmlBody.isEmpty()) {
+            return allUrls;
+        }
+        URL docUrl = helpers.analyzeRequest(mainResp.getRequest()).getUrl();
+        allUrls.addAll(extractPathsFromJsHtml(htmlBody, docUrl, true));
+        List<String> scriptUrls = parseScriptSrcUrls(htmlBody, requestUrl);
+        int fetched = 0;
+        for (String scriptUrlStr : scriptUrls) {
+            if (fetched >= MAX_SCRIPTS_TO_FETCH) {
+                break;
+            }
+            try {
+                URL scriptUrl = new URL(scriptUrlStr);
+                if (!scriptUrl.getHost().equalsIgnoreCase(mainUrl.getHost())) {
+                    continue;
+                }
+                byte[] sReq = helpers.buildHttpRequest(scriptUrl);
+                IHttpRequestResponse sResp = callbacks.makeHttpRequest(service, sReq);
+                if (sResp == null || sResp.getResponse() == null) {
+                    continue;
+                }
+                IResponseInfo sInfo = helpers.analyzeResponse(sResp.getResponse());
+                int sOffset = sInfo.getBodyOffset();
+                int sLen = Math.min(sResp.getResponse().length - sOffset, MAX_BODY_LENGTH);
+                if (sLen <= 0) {
+                    continue;
+                }
+                String jsBody = helpers.bytesToString(Arrays.copyOfRange(sResp.getResponse(), sOffset, sOffset + sLen));
+                if (jsBody != null && !jsBody.isEmpty()) {
+                    URL scriptDocUrl = helpers.analyzeRequest(sResp.getRequest()).getUrl();
+                    allUrls.addAll(extractPathsFromJsHtml(jsBody, scriptDocUrl, false));
+                    fetched++;
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return allUrls;
+    }
+
+    private Set<String> buildBuiltinUrlsForTarget(URL mainUrl, int port) {
+        Set<String> urls = new LinkedHashSet<String>();
+        try {
+            boolean defaultPort = ("https".equalsIgnoreCase(mainUrl.getProtocol()) && port == 443)
+                    || ("http".equalsIgnoreCase(mainUrl.getProtocol()) && port == 80);
+            String baseStr = mainUrl.getProtocol() + "://" + mainUrl.getHost() + (defaultPort ? "" : ":" + port);
+            String pathPrefix = mainUrl.getPath();
+            if (pathPrefix == null || pathPrefix.isEmpty()) {
+                pathPrefix = "/";
+            } else if (!pathPrefix.endsWith("/")) {
+                pathPrefix = pathPrefix + "/";
+            }
+            URL baseUrl = new URL(baseStr + pathPrefix);
+            urls.addAll(buildBuiltinFullUrls(baseUrl));
+        } catch (Exception ignored) {
+        }
+        return urls;
     }
 
     private static Set<String> buildBuiltinFullUrls(URL base) {
@@ -264,57 +298,92 @@ public class ApiScanModule implements Module {
     }
 
     private void scanMessage(IHttpRequestResponse messageInfo) {
-        if (messageInfo == null || messageInfo.getResponse() == null) return;
+        if (messageInfo == null || messageInfo.getResponse() == null) {
+            return;
+        }
         IResponseInfo responseInfo = helpers.analyzeResponse(messageInfo.getResponse());
         String contentType = responseInfo.getStatedMimeType();
-        if (contentType == null) contentType = "";
+        if (contentType == null) {
+            contentType = "";
+        }
         String ct = contentType.toLowerCase();
         boolean isScript = ct.contains("script");
         boolean isHtml = ct.contains("html");
         boolean isJson = ct.contains("json");
         boolean isXml = ct.contains("xml");
+
         if (!isScript && !isHtml && !isJson && !isXml && messageInfo.getRequest() != null) {
-            try {
-                URL u = helpers.analyzeRequest(messageInfo.getRequest()).getUrl();
-                String path = u != null ? u.getPath() : null;
-                if (path != null) {
+            String path = getRequestPath(messageInfo);
+            if (path != null) {
                 String p = path.toLowerCase();
-                if (p.endsWith(".js") || p.endsWith(".mjs")) isScript = true;
-                else if (p.endsWith(".html") || p.endsWith(".htm") || p.equals("/") || p.endsWith("/")) isHtml = true;
+                if (p.endsWith(".js") || p.endsWith(".mjs")) {
+                    isScript = true;
+                } else if (p.endsWith(".html") || p.endsWith(".htm") || p.equals("/") || p.endsWith("/")) {
+                    isHtml = true;
                 }
-            } catch (Exception ignored) { }
+            }
         }
-        if (!isScript && !isHtml && !isJson && !isXml) return;
+        if (!isScript && !isHtml && !isJson && !isXml) {
+            return;
+        }
 
         int bodyOffset = responseInfo.getBodyOffset();
         byte[] response = messageInfo.getResponse();
         int length = Math.min(response.length - bodyOffset, MAX_BODY_LENGTH);
-        if (length <= 0) return;
+        if (length <= 0) {
+            return;
+        }
         byte[] bodyBytes = new byte[length];
         System.arraycopy(response, bodyOffset, bodyBytes, 0, length);
         String body = helpers.bytesToString(bodyBytes);
-        if (body == null || body.isEmpty()) return;
+        if (body == null || body.isEmpty()) {
+            return;
+        }
 
         URL documentUrl = helpers.analyzeRequest(messageInfo).getUrl();
         Set<String> fullUrls = extractPathsFromJsHtml(body, documentUrl, isHtml);
         if (fullUrls.isEmpty()) {
-            try {
-                String baseStr = documentUrl.getProtocol() + "://" + documentUrl.getHost();
-                int port = documentUrl.getPort();
-                boolean defaultPort = ("https".equalsIgnoreCase(documentUrl.getProtocol()) && port == 443) || ("http".equalsIgnoreCase(documentUrl.getProtocol()) && port == 80);
-                if (!defaultPort && port > 0) baseStr += ":" + port;
-                String pathPrefix = documentUrl.getPath();
-                if (pathPrefix == null || pathPrefix.isEmpty()) pathPrefix = "/";
-                else if (!pathPrefix.endsWith("/")) pathPrefix = pathPrefix + "/";
-                URL baseUrl = new URL(baseStr + pathPrefix);
-                fullUrls.addAll(buildBuiltinFullUrls(baseUrl));
-            } catch (Exception ignored) { }
+            fullUrls.addAll(buildBuiltinUrlsForDocument(documentUrl));
         }
-        if (fullUrls.isEmpty()) return;
+        if (fullUrls.isEmpty()) {
+            return;
+        }
 
         final Set<String> copy = new LinkedHashSet<String>(fullUrls);
         final IHttpRequestResponse msg = messageInfo;
         SwingUtilities.invokeLater(() -> resultPanel.addApis(copy, msg));
+    }
+
+    private String getRequestPath(IHttpRequestResponse messageInfo) {
+        try {
+            URL u = helpers.analyzeRequest(messageInfo.getRequest()).getUrl();
+            return u != null ? u.getPath() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Set<String> buildBuiltinUrlsForDocument(URL documentUrl) {
+        Set<String> urls = new LinkedHashSet<String>();
+        try {
+            String baseStr = documentUrl.getProtocol() + "://" + documentUrl.getHost();
+            int port = documentUrl.getPort();
+            boolean defaultPort = ("https".equalsIgnoreCase(documentUrl.getProtocol()) && port == 443)
+                    || ("http".equalsIgnoreCase(documentUrl.getProtocol()) && port == 80);
+            if (!defaultPort && port > 0) {
+                baseStr += ":" + port;
+            }
+            String pathPrefix = documentUrl.getPath();
+            if (pathPrefix == null || pathPrefix.isEmpty()) {
+                pathPrefix = "/";
+            } else if (!pathPrefix.endsWith("/")) {
+                pathPrefix = pathPrefix + "/";
+            }
+            URL baseUrl = new URL(baseStr + pathPrefix);
+            urls.addAll(buildBuiltinFullUrls(baseUrl));
+        } catch (Exception ignored) {
+        }
+        return urls;
     }
 
     private Set<String> extractPathsFromJsHtml(String body, URL documentUrl, boolean isHtml) {

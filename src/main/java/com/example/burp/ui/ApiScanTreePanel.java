@@ -2,9 +2,14 @@ package com.example.burp.ui;
 
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpRequestResponse;
+import com.example.burp.util.ClipboardUtils;
+import com.example.burp.util.UrlUtils;
 
 import javax.swing.JButton;
+import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
 import javax.swing.JTextField;
 import javax.swing.JToolBar;
@@ -15,17 +20,11 @@ import javax.swing.tree.DefaultTreeModel;
 import javax.swing.tree.TreePath;
 import javax.swing.tree.TreeSelectionModel;
 import java.awt.BorderLayout;
-import java.awt.Toolkit;
-import java.awt.datatransfer.StringSelection;
-import java.net.URL;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import javax.swing.JLabel;
-import javax.swing.JMenuItem;
-import javax.swing.JPopupMenu;
 
 public class ApiScanTreePanel extends JPanel {
     private final IBurpExtenderCallbacks callbacks;
@@ -106,9 +105,9 @@ public class ApiScanTreePanel extends JPanel {
     private void copySelectedUrl() {
         Object node = getSelectedUserObject();
         if (node instanceof ApiEntry) {
-            copyToClipboard(((ApiEntry) node).getUrl());
+            ClipboardUtils.copyToClipboard(((ApiEntry) node).getUrl());
         } else if (node instanceof String && !"API".equals(node)) {
-            copyToClipboard((String) node);
+            ClipboardUtils.copyToClipboard((String) node);
         }
     }
 
@@ -121,7 +120,7 @@ public class ApiScanTreePanel extends JPanel {
         StringBuilder sb = new StringBuilder();
         collectUrls(node, sb);
         if (sb.length() > 0) {
-            copyToClipboard(sb.toString());
+            ClipboardUtils.copyToClipboard(sb.toString());
         }
     }
 
@@ -175,16 +174,11 @@ public class ApiScanTreePanel extends JPanel {
         return node.getUserObject();
     }
 
-    private void copyToClipboard(String text) {
-        StringSelection selection = new StringSelection(text);
-        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
-    }
-
     public void addApi(String fullUrl, IHttpRequestResponse requestResponse) {
         if (fullUrl == null || fullUrl.isEmpty()) {
             return;
         }
-        String origin = originFromUrl(fullUrl);
+        String origin = UrlUtils.extractOrigin(fullUrl);
         if (origin == null) {
             return;
         }
@@ -213,28 +207,4 @@ public class ApiScanTreePanel extends JPanel {
             addApi(url, requestResponse);
         }
     }
-
-    private static String originFromUrl(String fullUrl) {
-        try {
-            URL u = new URL(fullUrl);
-            String protocol = u.getProtocol();
-            String host = u.getHost();
-            if (host == null) {
-                return null;
-            }
-            int port = u.getPort();
-            if (port <= 0) {
-                port = "https".equalsIgnoreCase(protocol) ? 443 : 80;
-            }
-            String origin = protocol + "://" + host;
-            int defaultPort = "https".equalsIgnoreCase(protocol) ? 443 : 80;
-            if (port != defaultPort) {
-                origin += ":" + port;
-            }
-            return origin;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
 }

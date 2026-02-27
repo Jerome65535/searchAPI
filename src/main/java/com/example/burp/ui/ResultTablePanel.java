@@ -3,6 +3,7 @@ package com.example.burp.ui;
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpRequestResponse;
 import com.example.burp.core.ResultItem;
+import com.example.burp.util.ClipboardUtils;
 
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
@@ -14,8 +15,6 @@ import javax.swing.JTable;
 import javax.swing.JToolBar;
 import javax.swing.table.TableRowSorter;
 import java.awt.BorderLayout;
-import java.awt.Toolkit;
-import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -92,7 +91,7 @@ public class ResultTablePanel extends JPanel {
                     .append(item.getUrl()).append("\t")
                     .append(item.getDetail()).append("\n");
         }
-        copyToClipboard(sb.toString());
+        ClipboardUtils.copyToClipboard(sb.toString());
     }
 
     private void copySelectedUrls(ActionEvent e) {
@@ -104,7 +103,7 @@ public class ResultTablePanel extends JPanel {
         for (ResultItem item : items) {
             sb.append(item.getUrl()).append("\n");
         }
-        copyToClipboard(sb.toString());
+        ClipboardUtils.copyToClipboard(sb.toString());
     }
 
     private void exportCsv(ActionEvent e) {
@@ -195,10 +194,5 @@ public class ResultTablePanel extends JPanel {
         }
         int modelRow = table.convertRowIndexToModel(row);
         return model.getItem(modelRow);
-    }
-
-    private void copyToClipboard(String text) {
-        StringSelection selection = new StringSelection(text);
-        Toolkit.getDefaultToolkit().getSystemClipboard().setContents(selection, selection);
     }
 }
